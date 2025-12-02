@@ -1,0 +1,10 @@
+# External CLI dependencies: 
+# pandoc>=2.11
+# poppler-utils (for pdf2image)
+
+# Python dependencies
+weasyprint>=60.0
+openai
+pdf2image
+Pillow
+python-dotenv
