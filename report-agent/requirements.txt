@@ -1,0 +1,9 @@
+google-adk
+# ADK dependencies
+google-genai>=1.0.0
+python-dotenv
+
+# PDF processing dependencies (from parent project)
+weasyprint>=60.0
+pdf2image
+Pillow
