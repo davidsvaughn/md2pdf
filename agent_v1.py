@@ -292,15 +292,20 @@ if __name__ == "__main__":
     # Example usage
     
     # reset files for demo
+    # company = "x1"
+    company = "ath"
+    
     # base = "basic"
     base = "premium"
     
-    shutil.copyfile(f"docs/x1-{base}.md", f"x1-{base}.md")
+    
+    # copy starting files
+    shutil.copyfile(f"docs/{company}-{base}.md", f"{company}-{base}.md")
     shutil.copyfile("docs/custom.css", "css/custom.css")
     
     agent = ReportAgent(
-        markdown_path=f"x1-{base}.md",
-        pdf_path=f"x1-{base}.pdf",
+        markdown_path=f"{company}-{base}.md",
+        pdf_path=f"{company}-{base}.pdf",
         css_path="css/custom.css"
     )
     agent.run()
