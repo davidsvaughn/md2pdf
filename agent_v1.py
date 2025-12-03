@@ -143,7 +143,7 @@ class ReportAgent:
             
             if action["type"] == "replace_in_file":
                 if action["original"] not in content:
-                    print(f"WARNING: Could not find text to replace in {target_path}")
+                    print(f"WARNING: Could not find text to replace in {target_path}: {action['original']}")
                     continue
                 content = content.replace(action["original"], action["replacement"])
                 print(f"Applied replacement in {target_path}")
