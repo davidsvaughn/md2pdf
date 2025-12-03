@@ -26,6 +26,18 @@ MODEL = os.environ.get("MODEL", "gpt-5.1")
 MAX_ITERATIONS = int(os.environ.get("MAX_ITERATIONS", 5))
 SYSTEM_PROMPT = "p4.md"
 
+# Pricing per 1K tokens (USD) - update as needed for your model
+# These are estimates - check OpenAI's pricing page for current rates
+MODEL_PRICING = {
+    "gpt-5.1": {"input": 0.00125, "output": 0.01},
+    "gpt-4.1": {"input": 0.01, "output": 0.03},
+    "gpt-4o": {"input": 0.005, "output": 0.015},
+    "gpt-4-turbo": {"input": 0.01, "output": 0.03},
+    "gpt-4-vision-preview": {"input": 0.01, "output": 0.03},
+}
+# Default pricing if model not found
+DEFAULT_PRICING = {"input": 0.01, "output": 0.03}
+
 
 def best_fuzzy_span(text: str, query: str, *, threshold=95, win=1, max_window_factor=1.01):
     """
@@ -113,6 +125,12 @@ class ReportAgent:
         self.client = OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY"))
         self.max_iterations = MAX_ITERATIONS
         self.history = []
+        
+        # Telemetry tracking
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+        self.api_call_count = 0
+        self.model = MODEL
 
     def save_snapshot(self) -> int:
         """Save current file states for potential rollback. Returns snapshot index."""
@@ -163,7 +181,8 @@ class ReportAgent:
         
         for img in images:
             # Resize to reduce token cost while maintaining readability
-            img.thumbnail((1024, 1024))
+            # Use higher resolution (2048) for better detection of list formatting issues
+            img.thumbnail((2048, 2048))
             
             # Save to buffer
             import io
@@ -213,6 +232,12 @@ class ReportAgent:
             response_format={"type": "json_object"}
         )
         
+        # Track token usage for telemetry
+        if response.usage:
+            self.total_input_tokens += response.usage.prompt_tokens
+            self.total_output_tokens += response.usage.completion_tokens
+            self.api_call_count += 1
+        
         return json.loads(response.choices[0].message.content)
 
     def apply_changes(self, actions: List[Dict[str, Any]]) -> bool:
@@ -253,6 +278,28 @@ class ReportAgent:
         
         return changes_made
 
+    def print_cost_summary(self):
+        """Print a summary of API usage and estimated costs."""
+        pricing = MODEL_PRICING.get(self.model, DEFAULT_PRICING)
+        
+        input_cost = (self.total_input_tokens / 1000) * pricing["input"]
+        output_cost = (self.total_output_tokens / 1000) * pricing["output"]
+        total_cost = input_cost + output_cost
+        
+        print("\n" + "=" * 40)
+        print("         TELEMETRY SUMMARY")
+        print("=" * 40)
+        print(f"  Model:          {self.model}")
+        print(f"  API Calls:      {self.api_call_count}")
+        print(f"  Input Tokens:   {self.total_input_tokens:,}")
+        print(f"  Output Tokens:  {self.total_output_tokens:,}")
+        print(f"  Total Tokens:   {self.total_input_tokens + self.total_output_tokens:,}")
+        print("-" * 40)
+        print(f"  Input Cost:     ${input_cost:.4f}")
+        print(f"  Output Cost:    ${output_cost:.4f}")
+        print(f"  TOTAL COST:     ${total_cost:.4f}")
+        print("=" * 40)
+
     def run(self):
         # Save initial state before any modifications
         self.save_snapshot()
@@ -287,6 +334,9 @@ class ReportAgent:
             print("Max iterations reached without passing.")
         
         print(f"\nHistory: {len(self.history)} snapshot(s) saved for potential rollback")
+        
+        # Print cost telemetry
+        self.print_cost_summary()
 
 if __name__ == "__main__":
     # Example usage
