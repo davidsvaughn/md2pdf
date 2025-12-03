@@ -182,7 +182,7 @@ class ReportAgent:
         for img in images:
             # Resize to reduce token cost while maintaining readability
             # Use higher resolution (2048) for better detection of list formatting issues
-            img.thumbnail((2048, 2048))
+            img.thumbnail((1024, 1024))
             
             # Save to buffer
             import io
