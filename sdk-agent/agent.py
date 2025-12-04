@@ -17,15 +17,21 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from agents import Agent, Runner
 
 # Import our tools
+# Functions decorated with @function_tool are for the agent to call
+# Plain functions are for direct orchestration code use
 from tools import (
+    # Agent tools (decorated with @function_tool)
     read_file,
     insert_blank_line_before,
     modify_css_property,
+    get_bulleted_list_first_lines,
+    generate_pdf_tool,
+    list_changes_tool,
+    # Direct call functions (not decorated)
     generate_pdf,
     get_pdf_images,
     save_snapshot,
     list_changes,
-    get_bulleted_list_first_lines
 )
 
 load_dotenv()
@@ -45,6 +51,9 @@ def load_instructions() -> str:
     """Return agent instructions that tell it to USE tools, not output JSON"""
     return """You are an expert PDF quality improvement agent.
 
+The goal is to generate a professionally formatted PDF from provided Markdown and CSS files.
+The PDF report MUST look slick and professional - it will be given to potential investors.
+The stakes are high here - the PDF must look flawless. If not, millions of dollars could be lost.
 Your task is to analyze rendered PDF pages and FIX any issues you find by calling your available tools.
 
 IMPORTANT: You must CALL TOOLS to make changes. Do NOT output JSON. Call the tools directly.
@@ -54,10 +63,10 @@ Available tools:
 - get_bulleted_list_first_lines() - Find all bulleted lists and return the first line of each
 - insert_blank_line_before(file_type, search_text) - Insert blank line before text (fixes list parsing issues)
 - modify_css_property(selector, property, value) - Add/update CSS properties
-- generate_pdf() - Regenerate the PDF after making changes
-- list_changes() - See what changes you've made
+- generate_pdf_tool() - Regenerate the PDF after making changes
+- list_changes_tool() - See what changes you've made
 
-Common issues and how to fix them:
+Some common issues and how to fix them:
 
 1. BROKEN LISTS - This is a critical issue to identify correctly!
 
@@ -68,32 +77,35 @@ Common issues and how to fix them:
    - Example: "- item one - item two - item three" all on one or wrapped lines
    
    WHAT A CORRECT LIST LOOKS LIKE IN THE PDF:
-   - Items are stacked VERTICALLY, one per line
-   - Each item has a bullet SYMBOL (•, ◦, ▪) - NOT a dash character
-   - No visible "-" or "*" characters at the start of items
+   - Items are stacked VERTICALLY, one per line, with same indentation
    
    HOW TO FIX:
-   a) FIRST: Look at each list in the PDF image carefully
-   b) Call get_bulleted_list_first_lines() to get all list first lines
-   c) For ONLY the lists that are BROKEN (show visible dashes), call:
+   a) FIRST: Call get_bulleted_list_first_lines() to get all list first lines
+   b) Look at each list in the PDF image carefully
+   c) For ONLY the lists that are BROKEN (NOT stacked vertically), call:
       insert_blank_line_before("markdown", "<first line text>")
-   d) SKIP any list that already shows bullet symbols (•, ◦) - these are CORRECT!
+   d) SKIP any list that is already rendering correctly!
    
-   CRITICAL: Do NOT fix lists that are already rendering correctly with bullet symbols!
-   The tool gives you ALL lists - you must visually verify which ones need fixing.
+   CRITICAL: Do NOT fix lists that are already rendering correctly!
+   The tool should give you all lists - you must visually verify which ones need fixing.
+   There may be other intended bullet lists missed by the tool - use your judgment.
    
-2. Poor spacing/pagination:
+2. Poor spacing/pagination - Example fixes:
    - Call modify_css_property("@page", "margin", "0.5in") to adjust page margins
    - Call modify_css_property("h2", "margin-top", "0.3em") to reduce heading spacing
 
 3. Orphaned content on last page:
-   - Reduce margins or spacing with modify_css_property
+   - Reduce margins or spacing with modify_css_property to fit content better
+   
+There may be other format/layout issues you identify - use your judgment to fix them with the tools.
+Only attempt to fix issues you have the tools to fix.
 
 WORKFLOW:
 1. CAREFULLY analyze the PDF images - identify exactly which lists are broken vs correct
-2. Only fix the specific lists that show visible dashes (broken rendering)
-3. After making fixes, call generate_pdf() to regenerate the PDF
-4. I will send you updated images for the next iteration
+2. Only fix the specific lists that are BROKEN (NOT stacked vertically)
+3. Fix any other format/layout issues you find using the appropriate tools
+4. After making fixes, call generate_pdf_tool() to regenerate the PDF
+5. I will send you updated images for the next iteration
 
 When the PDF looks good and all issues are fixed, respond with just the word "APPROVED".
 """
@@ -157,8 +169,8 @@ async def improve_pdf():
             get_bulleted_list_first_lines,
             insert_blank_line_before,
             modify_css_property,
-            generate_pdf,
-            list_changes
+            generate_pdf_tool,
+            list_changes_tool
         ]
     )
     
@@ -167,8 +179,8 @@ async def improve_pdf():
     print("  - get_bulleted_list_first_lines")
     print("  - insert_blank_line_before")
     print("  - modify_css_property")
-    print("  - generate_pdf")
-    print("  - list_changes")
+    print("  - generate_pdf_tool")
+    print("  - list_changes_tool")
     print()
     
     # Main improvement loop

@@ -211,9 +211,9 @@ def modify_css_property(selector: str, property: str, value: str) -> Dict:
     }
 
 
-@function_tool
 def generate_pdf() -> Dict:
     """Generate PDF from current markdown and CSS.
+    Called directly by agent orchestration code.
     
     Returns:
         {
@@ -366,9 +366,9 @@ def save_snapshot(description: str = "") -> Dict:
     }
 
 
-@function_tool
 def list_changes() -> Dict:
     """Show what changed since last snapshot.
+    Called directly by agent orchestration code.
     
     Returns:
         {
@@ -474,6 +474,25 @@ def _first_lines_of_bulleted_lists(md: str) -> List[str]:
         i += 1
 
     return out
+
+
+# Agent-callable tool wrappers
+@function_tool
+def generate_pdf_tool() -> Dict:
+    """Generate PDF from current markdown and CSS files.
+    
+    Call this after making changes to regenerate the PDF.
+    """
+    return generate_pdf()
+
+
+@function_tool
+def list_changes_tool() -> Dict:
+    """Show what changed since last snapshot.
+    
+    Use this to see the modifications you've made.
+    """
+    return list_changes()
 
 
 @function_tool
