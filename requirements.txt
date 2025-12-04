@@ -9,3 +9,8 @@ pdf2image
 Pillow
 python-dotenv
 rapidfuzz
+
+# OpenAI agent sdk
+openai-agents
+openai
+asyncio

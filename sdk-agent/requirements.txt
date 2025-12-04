@@ -1,0 +1,8 @@
+# OpenAI Agents SDK dependencies
+openai-agents>=0.2.0
+python-dotenv
+
+# PDF processing dependencies (from parent project)
+weasyprint>=60.0
+pdf2image
+Pillow
