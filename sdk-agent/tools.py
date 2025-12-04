@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, List
 from pdf2image import convert_from_path
 from PIL import Image
+import pdfplumber
 import io
 import difflib
 import re
@@ -134,6 +135,135 @@ def insert_blank_line_before(file_type: str, search_text: str) -> Dict:
         'line_number': found_line + 1,
         'context': context,
         'message': f'Inserted blank line before line {found_line + 1}'
+    }
+
+
+def fix_broken_list(search_text: str) -> Dict:
+    """Insert blank line before a list (direct call version, no snapshot).
+    
+    Args:
+        search_text: First line of the broken list
+    
+    Returns:
+        {'success': bool, 'line_number': int} or {'success': False, 'error': str}
+    """
+    if not MD_FILE.exists():
+        return {'success': False, 'error': 'Markdown file not found'}
+    
+    content = MD_FILE.read_text(encoding='utf-8')
+    lines = content.splitlines(keepends=True)
+    
+    # Find first occurrence (case-insensitive)
+    search_lower = search_text.lower().strip()
+    found_line = -1
+    
+    for i, line in enumerate(lines):
+        if search_lower in line.lower():
+            found_line = i
+            break
+    
+    if found_line == -1:
+        return {'success': False, 'error': f'Text not found: "{search_text[:50]}..."'}
+    
+    # Don't insert if there's already a blank line before
+    if found_line > 0 and lines[found_line - 1].strip() == '':
+        return {'success': True, 'already_exists': True, 'line_number': found_line + 1}
+    
+    # Insert blank line
+    lines.insert(found_line, '\n')
+    
+    # Write back
+    MD_FILE.write_text(''.join(lines), encoding='utf-8')
+    
+    return {'success': True, 'line_number': found_line + 1}
+
+
+def preprocess_broken_lists() -> Dict:
+    """
+    Auto-fix all broken lists before the agent starts.
+    
+    Workflow:
+    1. Generate initial PDF
+    2. Find broken lists
+    3. Insert blank line before each broken list
+    4. Regenerate PDF and verify
+    5. Repeat until no broken lists remain (max 3 iterations)
+    
+    Returns:
+        {
+            'success': bool,
+            'fixed_count': int,
+            'iterations': int,
+            'remaining_broken': int
+        }
+    """
+    max_iterations = 3
+    total_fixed = 0
+    
+    for iteration in range(1, max_iterations + 1):
+        # Generate PDF
+        pdf_result = generate_pdf()
+        if not pdf_result.get('success'):
+            return {'success': False, 'error': f'PDF generation failed: {pdf_result.get("error")}'}
+        
+        # Find broken lists
+        broken_result = find_broken_lists()
+        if not broken_result.get('success'):
+            return {'success': False, 'error': f'Broken list detection failed: {broken_result.get("error")}'}
+        
+        broken_lists = broken_result.get('broken_lists', [])
+        
+        if not broken_lists:
+            # All done!
+            return {
+                'success': True,
+                'fixed_count': total_fixed,
+                'iterations': iteration,
+                'remaining_broken': 0,
+                'message': f'All lists are rendering correctly. Fixed {total_fixed} lists in {iteration} iteration(s).'
+            }
+        
+        # Fix each broken list
+        fixed_this_round = 0
+        unfixed_this_round = []
+        for first_line in broken_lists:
+            result = fix_broken_list(first_line)
+            if result.get('success') and not result.get('already_exists'):
+                fixed_this_round += 1
+            else:
+                # Track lists that couldn't be fixed (already had blank line or not found)
+                unfixed_this_round.append(first_line)
+        
+        total_fixed += fixed_this_round
+        print(f"  Iteration {iteration}: Fixed {fixed_this_round} broken lists ({len(broken_lists)} detected)")
+        
+        # Print any lists that couldn't be fixed
+        if unfixed_this_round:
+            print(f"  ⚠ {len(unfixed_this_round)} lists could not be fixed by inserting blank line:")
+            for line in unfixed_this_round:
+                preview = line.strip()[:80] + "..." if len(line.strip()) > 80 else line.strip()
+                print(f"    - {preview}")
+    
+    # Final check after max iterations
+    pdf_result = generate_pdf()
+    broken_result = find_broken_lists()
+    remaining_lists = broken_result.get('broken_lists', [])
+    remaining = len(remaining_lists)
+    
+    # Print remaining broken lists if any
+    if remaining > 0:
+        print(f"\n  ⚠ {remaining} lists STILL BROKEN after {max_iterations} iterations:")
+        for line in remaining_lists:
+            preview = line.strip()[:80] + "..." if len(line.strip()) > 80 else line.strip()
+            print(f"    - {preview}")
+    
+    return {
+        'success': remaining == 0,
+        'fixed_count': total_fixed,
+        'iterations': max_iterations,
+        'remaining_broken': remaining,
+        'remaining_lists': remaining_lists,
+        'message': f'Fixed {total_fixed} lists. {remaining} lists still broken after {max_iterations} iterations.'
     }
 
 
@@ -562,6 +692,76 @@ _BULLET_RE = re.compile(r'^(\s*)([*+-])\s+.+$')
 _HRULE_RE = re.compile(r'^\s*([-*_])(?:\s*\1){2,}\s*$')  # --- , ***, ___ (3+)
 
 
+def _is_bullet_line(line: str) -> bool:
+    """Check if a line is a bullet list item."""
+    if not _BULLET_RE.match(line):
+        return False
+    if _HRULE_RE.match(line.strip()):
+        return False
+    return True
+
+
+def _get_bullet_text(line: str) -> str:
+    """Extract the text content from a bullet line (without the bullet marker)."""
+    match = _BULLET_RE.match(line)
+    if match:
+        # Remove leading whitespace and bullet marker (-, *, +) and following space
+        return re.sub(r'^\s*[*+-]\s+', '', line)
+    return line
+
+
+def _first_two_lines_of_bulleted_lists(md: str) -> List[tuple]:
+    """
+    Return tuples of (first_line, second_line, first_word_of_second) for each 
+    bulleted list block in the Markdown string `md`.
+    
+    This is used for verification - to check if lists render vertically.
+    """
+    lines = md.splitlines()
+    n = len(lines)
+    out: List[tuple] = []
+
+    i = 0
+    while i < n:
+        if _is_bullet_line(lines[i]):
+            prev_bullet = _is_bullet_line(lines[i - 1]) if i > 0 else False
+            prev_blank = (i == 0 or lines[i - 1].strip() == "")
+            if not prev_bullet or prev_blank:
+                first_line = lines[i]
+                # Find second bullet in this list
+                second_line = None
+                first_word_of_second = None
+                j = i + 1
+                while j < n:
+                    if _is_bullet_line(lines[j]):
+                        second_line = lines[j]
+                        # Extract first word of second item's text
+                        text = _get_bullet_text(lines[j])
+                        words = text.split()
+                        if words:
+                            # Get first word, strip punctuation for matching
+                            first_word_of_second = words[0].strip('*_"\'()')
+                        break
+                    elif lines[j].strip() == "" or lines[j].startswith(" "):
+                        j += 1
+                        continue
+                    else:
+                        break  # End of list without finding second item
+                    j += 1
+                
+                if second_line and first_word_of_second:
+                    out.append((first_line, second_line, first_word_of_second))
+                
+                # Skip the rest of this list block
+                while j < n and (_is_bullet_line(lines[j]) or lines[j].strip() == "" or lines[j].startswith(" ")):
+                    j += 1
+                i = j
+                continue
+        i += 1
+
+    return out
+
+
 def _first_lines_of_bulleted_lists(md: str) -> List[str]:
     """
     Return the full first line (including indentation and bullet symbol)
@@ -572,31 +772,119 @@ def _first_lines_of_bulleted_lists(md: str) -> List[str]:
     n = len(lines)
     out: List[str] = []
 
-    def is_bullet(idx: int):
-        line = lines[idx]
-        if not _BULLET_RE.match(line):
-            return False
-        # Ignore horizontal rules (---, ***, ___)
-        if _HRULE_RE.match(line.strip()):
-            return False
-        return True
-
     i = 0
     while i < n:
-        if is_bullet(i):
-            prev_bullet = is_bullet(i - 1) if i > 0 else False
+        if _is_bullet_line(lines[i]):
+            prev_bullet = _is_bullet_line(lines[i - 1]) if i > 0 else False
             prev_blank = (i == 0 or lines[i - 1].strip() == "")
             if not prev_bullet or prev_blank:
                 out.append(lines[i])
                 # Skip the rest of this list block
                 j = i + 1
-                while j < n and (is_bullet(j) or lines[j].strip() == "" or lines[j].startswith(" ")):
+                while j < n and (_is_bullet_line(lines[j]) or lines[j].strip() == "" or lines[j].startswith(" ")):
                     j += 1
                 i = j
                 continue
         i += 1
 
     return out
+
+
+def normalize(s: str) -> str:
+    # Remove all non-alphanumeric characters
+    return re.sub(r'[^a-zA-Z0-9]', '', s)
+
+def find_broken_lists() -> Dict:
+    """
+    Detect broken lists by comparing markdown source to extracted PDF text.
+    
+    A list renders correctly if each bullet item appears on its own line in the PDF.
+    A list is BROKEN if items run together on the same line.
+    
+    Returns:
+        {
+            'success': bool,
+            'broken_lists': list of first lines that need fixing,
+            'correct_lists': list of first lines that are fine,
+            'broken_count': int,
+            'total_count': int
+        }
+    """
+    if not MD_FILE.exists():
+        return {'success': False, 'error': 'Markdown file not found'}
+    if not PDF_FILE.exists():
+        return {'success': False, 'error': 'PDF file not found. Generate it first with generate_pdf()'}
+    
+    # Read markdown to get list info
+    md_content = MD_FILE.read_text(encoding='utf-8')
+    list_data = _first_two_lines_of_bulleted_lists(md_content)
+    
+    if not list_data:
+        return {
+            'success': True,
+            'broken_lists': [],
+            'correct_lists': [],
+            'broken_count': 0,
+            'total_count': 0,
+            'message': 'No bulleted lists found in document'
+        }
+    
+    # Extract text from PDF
+    pdf_text = ""
+    try:
+        with pdfplumber.open(PDF_FILE) as pdf:
+            for page in pdf.pages:
+                pdf_text += page.extract_text() or ""
+                pdf_text += "\n"
+    except Exception as e:
+        return {'success': False, 'error': f'Failed to extract PDF text: {str(e)}'}
+    
+    pdf_lines = pdf_text.splitlines()
+    
+    broken_lists = []
+    correct_lists = []
+    
+    for first_line, second_line, expected_word in list_data:
+        # Get the text content of first and second items (without bullet markers)
+        first_text = _get_bullet_text(first_line).strip()
+        second_text = _get_bullet_text(second_line).strip()
+        
+        # Get first few words of each for matching
+        first_words = normalize(' '.join(first_text.split()[:5]))  # First 5 words
+        second_words = normalize(' '.join(second_text.split()[:5]))  # First 5 words
+        
+        # Check if we can find lines where first and second items are on SEPARATE lines
+        # A broken list will have items on the SAME line or consecutive wrapped lines
+        # A correct list will have items with bullet symbols on well-separated lines
+        list_is_vertical = False
+        
+        for i, pdf_line in enumerate(pdf_lines):
+            pdf_line_norm = normalize(pdf_line)
+            # Look for a line containing the start of first item
+            if pdf_line_norm.startswith(first_words):
+                # Check if second item's start is on a DIFFERENT line
+                if second_words not in pdf_line_norm:
+                    # Check if second item appears on a subsequent line
+                    for j in range(i + 1, min(i + 10, len(pdf_lines))):
+                        if normalize(pdf_lines[j]).startswith(second_words):
+                            list_is_vertical = True
+                            break
+                break
+        
+        if list_is_vertical:
+            correct_lists.append(first_line.strip())
+        else:
+            broken_lists.append(first_line.strip())
+    
+    return {
+        'success': True,
+        'broken_lists': broken_lists,
+        'correct_lists': correct_lists,
+        'broken_count': len(broken_lists),
+        'correct_count': len(correct_lists),
+        'total_count': len(list_data),
+        'message': f'{len(broken_lists)} broken lists need fixing, {len(correct_lists)} lists are correct'
+    }
 
 
 # Agent-callable tool wrappers
@@ -648,11 +936,188 @@ def get_bulleted_list_first_lines() -> Dict:
     }
 
 
+@function_tool
+def find_broken_lists_tool() -> Dict:
+    """Detect which bullet lists are broken by extracting text from the PDF.
+    
+    This is the DEFINITIVE way to check list rendering:
+    - A CORRECT list has each item on its own line in the PDF
+    - A BROKEN list has items running together on the same line
+    
+    WORKFLOW:
+    1. Call generate_pdf_tool() first to ensure PDF is up-to-date
+    2. Call this tool to get the list of broken lists
+    3. For each broken list, call insert_blank_line_before() with the first_line
+    4. Repeat until no broken lists remain
+    
+    Returns:
+        {
+            'success': bool,
+            'broken_lists': list[str],   # First lines of lists that need fixing
+            'correct_lists': list[str],  # First lines of lists that are fine
+            'broken_count': int,
+            'correct_count': int,
+            'total_count': int
+        }
+    """
+    return find_broken_lists()
+
+
+@function_tool
+def get_list_verification_tests() -> Dict:
+    """Get verification tests for all bullet lists.
+    
+    For EACH test, you must:
+    1. Find the list in the PDF image (use first_line_preview to locate it)
+    2. Look at the bullet point (•) of the FIRST item
+    3. Identify the word DIRECTLY BELOW that bullet point
+    4. Call verify_list_vertical(test_id, your_answer)
+    
+    If list is VERTICAL: The word below will be the bullet of the next item
+    If list is BROKEN: The word below will be something else (continuation text)
+    
+    YOU MUST COMPLETE ALL TESTS BEFORE APPROVAL!
+    
+    Returns:
+        {
+            'success': bool,
+            'tests': list of {'test_id': int, 'first_line_preview': str},
+            'count': int
+        }
+    """
+    if not MD_FILE.exists():
+        return {'success': False, 'error': 'Markdown file not found'}
+    
+    content = MD_FILE.read_text(encoding='utf-8')
+    list_data = _first_two_lines_of_bulleted_lists(content)
+    
+    tests = []
+    for i, (first_line, second_line, expected_word) in enumerate(list_data):
+        # Get first few words of first item for locating it in PDF
+        first_text = _get_bullet_text(first_line)
+        first_words = first_text.split()[:5]  # First 5 words for context
+        first_preview = ' '.join(first_words)
+        
+        # DO NOT include expected_word - keep it secret!
+        tests.append({
+            'test_id': i + 1,
+            'first_line_preview': first_preview + '...',
+        })
+    
+    return {
+        'success': True,
+        'tests': tests,
+        'count': len(tests),
+        'instructions': 'For EACH test: Find the list starting with first_line_preview in the PDF. What word is DIRECTLY BELOW the bullet (•)? Call verify_list_vertical(test_id, word_below_bullet) with your answer.'
+    }
+
+
+@function_tool  
+def verify_list_vertical(test_id: int, word_below_bullet: str) -> Dict:
+    """Verify if a specific list renders vertically.
+    
+    Look at the PDF and find the bullet list identified by test_id.
+    Tell me what word appears DIRECTLY BELOW the bullet point (•) of item 1.
+    
+    Args:
+        test_id: The test ID from get_list_verification_tests()
+        word_below_bullet: The word you see directly below the bullet point
+    
+    Returns:
+        {
+            'passed': bool,      # True = list is vertical (good), False = broken (needs fix)
+            'needs_fix': bool,   # True if this list needs fixing  
+            'first_line': str,   # Use this with insert_blank_line_before() if needs_fix
+        }
+    """
+    if not MD_FILE.exists():
+        return {'success': False, 'error': 'Markdown file not found'}
+    
+    content = MD_FILE.read_text(encoding='utf-8')
+    list_data = _first_two_lines_of_bulleted_lists(content)
+    
+    if test_id < 1 or test_id > len(list_data):
+        return {'success': False, 'error': f'Invalid test_id. Must be 1-{len(list_data)}'}
+    
+    first_line, second_line, expected_word = list_data[test_id - 1]
+    
+    # Normalize for comparison - strip common punctuation and formatting
+    answer_normalized = word_below_bullet.lower().strip().strip('*_"\'()•·-:,.')
+    expected_normalized = expected_word.lower().strip().strip('*_"\'()•·-:,.')
+    
+    # Check if answer matches expected (allowing some flexibility)
+    # The word below should be the first word of the second bullet item
+    passed = (answer_normalized == expected_normalized or 
+              expected_normalized.startswith(answer_normalized) or
+              answer_normalized.startswith(expected_normalized) or
+              answer_normalized in expected_normalized or
+              expected_normalized in answer_normalized)
+    
+    # DO NOT reveal the expected word - just pass/fail
+    if passed:
+        return {
+            'success': True,
+            'passed': True,
+            'needs_fix': False,
+            'message': 'PASSED - List renders vertically (correct)',
+            'first_line': first_line.strip()
+        }
+    else:
+        return {
+            'success': True,
+            'passed': False,
+            'needs_fix': True,
+            'message': 'FAILED - List is BROKEN (renders horizontally). Fix it with insert_blank_line_before()!',
+            'first_line': first_line.strip()
+        }
+
+
 if __name__ == "__main__":
-    # load docs/x1-basic.md and print first lines of bulleted lists
-    # md_path = Path(__file__).parent.parent / "docs" / "x1-basic.md"
-    md_path = Path(__file__).parent.parent / "docs" / "x1-premium.md"
-    md_content = md_path.read_text(encoding="utf-8")
-    lists = _first_lines_of_bulleted_lists(md_content)
-    for line in lists:
-        print(f'\n{line}')
+    import sys
+    
+    # Check for command line argument
+    if True: #len(sys.argv) > 1 and sys.argv[1] == "check":
+        # Test the find_broken_lists function
+        print("Testing find_broken_lists()...")
+        print(f"MD_FILE: {MD_FILE}")
+        print(f"PDF_FILE: {PDF_FILE}")
+        print()
+        
+        result = find_broken_lists()
+        
+        if not result['success']:
+            print(f"ERROR: {result.get('error', 'Unknown error')}")
+            sys.exit(1)
+        
+        print(f"Total lists: {result['total_count']}")
+        print(f"Broken: {result['broken_count']}")
+        print(f"Correct: {result['correct_count']}")
+        print()
+        
+        if result['broken_lists']:
+            print("=" * 60)
+            print("BROKEN LISTS (need fixing):")
+            print("=" * 60)
+            for i, line in enumerate(result['broken_lists'], 1):
+                preview = line[:70] + "..." if len(line) > 70 else line
+                print(f"  {i}. {preview}")
+        
+        print()
+        if result['correct_lists']:
+            print("=" * 60)
+            print("CORRECT LISTS (rendering properly):")
+            print("=" * 60)
+            for i, line in enumerate(result['correct_lists'], 1):
+                preview = line[:70] + "..." if len(line) > 70 else line
+                print(f"  {i}. {preview}")
+    else:
+        # Original behavior: print first lines of bulleted lists
+        # md_path = Path(__file__).parent.parent / "docs" / "x1-basic.md"
+        md_path = Path(__file__).parent.parent / "docs" / "x1-premium.md"
+        md_content = md_path.read_text(encoding="utf-8")
+        lists = _first_lines_of_bulleted_lists(md_content)
+        for line in lists:
+            print(f'\n{line}')
+        
+        print("\n\nTip: Run with 'check' argument to test find_broken_lists()")
+        print("  python tools.py check")

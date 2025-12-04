@@ -2,5 +2,18 @@
 html { font-size: 13px; }
 
 @page {
-  margin: 0.7in;
+  margin: 0.5in;
+}
+
+h1 {
+  margin-top: 0.3em;
+}
+
+h2 {
+  margin-top: 0.3em;
+  page-break-after: avoid;
+}
+
+p {
+  margin-bottom: 0.4em;
 }

@@ -20,13 +20,12 @@ from google.genai import types
 # Import our tools
 from tools import (
     read_file,
-    insert_blank_line_before,
     modify_css_property,
     generate_pdf,
     get_pdf_images,
     save_snapshot,
     list_changes,
-    get_bulleted_list_first_lines
+    preprocess_broken_lists
 )
 
 load_dotenv()
@@ -48,55 +47,50 @@ def load_instructions() -> str:
 
 Your task is to analyze rendered PDF pages and FIX any issues you find by calling your available tools.
 
+NOTE: Broken bullet lists have already been fixed in preprocessing. Focus on layout issues.
+
 IMPORTANT: You must CALL TOOLS to make changes. Do NOT output JSON. Call the tools directly.
 
 Available tools:
 - read_file(file_type) - Read "markdown" or "css" file contents
-- get_bulleted_list_first_lines() - Find all bulleted lists and return the first line of each
-- insert_blank_line_before(file_type, search_text) - Insert blank line before text (fixes list parsing issues)
 - modify_css_property(selector, property, value) - Add/update CSS properties
 - generate_pdf() - Regenerate the PDF after making changes
 - list_changes() - See what changes you've made
 
 Common issues and how to fix them:
 
-1. BROKEN LISTS - This is a critical issue to identify correctly!
+1. PAGE ECONOMY - CRITICAL!
+   If the LAST PAGE is less than ~35% filled (mostly blank), you MUST take action:
+   
+   OPTION A - REDUCE TO FIT:
+   - modify_css_property("@page", "margin", "0.5in") to reduce page margins
+   - modify_css_property("h1", "margin-top", "0.3em") to reduce heading spacing
+   - modify_css_property("h2", "margin-top", "0.3em") to reduce heading spacing
+   - modify_css_property("p", "margin-bottom", "0.4em") to reduce paragraph spacing
+   
+   OPTION B - EXPAND TO FILL:
+   - modify_css_property("@page", "margin", "0.75in") to increase margins
+   - modify_css_property("p", "margin-bottom", "1em") to increase spacing
+   
+   *** MARGIN LIMITS: 0.5in minimum, 1in maximum ***
 
-   WHAT A BROKEN LIST LOOKS LIKE IN THE PDF:
-   - Text flows as a continuous paragraph
-   - You see literal dash characters "-" or asterisks "*" in the text
-   - Items are NOT stacked vertically
-   - Example: "- item one - item two - item three" all on one or wrapped lines
-   
-   WHAT A CORRECT LIST LOOKS LIKE IN THE PDF:
-   - Items are stacked VERTICALLY, one per line
-   - Each item has a bullet SYMBOL (•, ◦, ▪) - NOT a dash character
-   - No visible "-" or "*" characters at the start of items
-   
-   HOW TO FIX:
-   a) FIRST: Look at each list in the PDF image carefully
-   b) Call get_bulleted_list_first_lines() to get all list first lines
-   c) For ONLY the lists that are BROKEN (show visible dashes), call:
-      insert_blank_line_before("markdown", "<first line text>")
-   d) SKIP any list that already shows bullet symbols (•, ◦) - these are CORRECT!
-   
-   CRITICAL: Do NOT fix lists that are already rendering correctly with bullet symbols!
-   The tool gives you ALL lists - you must visually verify which ones need fixing.
-   
-2. Poor spacing/pagination:
-   - Call modify_css_property("@page", "margin", "0.5in") to adjust page margins
-   - Call modify_css_property("h2", "margin-top", "0.3em") to reduce heading spacing
-
-3. Orphaned content on last page:
-   - Reduce margins or spacing with modify_css_property
+2. BAD PAGE BREAKS:
+   - Headings orphaned at bottom of pages
+   - Content awkwardly split across pages
+   - Use modify_css_property("h2", "page-break-after", "avoid") to keep headings with content
 
 WORKFLOW:
-1. CAREFULLY analyze the PDF images - identify exactly which lists are broken vs correct
-2. Only fix the specific lists that show visible dashes (broken rendering)
-3. After making fixes, call generate_pdf() to regenerate the PDF
+1. Analyze the PDF images - focus on page economy and page breaks
+2. Make CSS adjustments to improve layout
+3. Call generate_pdf() to regenerate the PDF
 4. I will send you updated images for the next iteration
 
-When the PDF looks good and all issues are fixed, respond with just the word "APPROVED".
+APPROVAL REQUIREMENTS:
+- Good page economy (last page >35% filled OR unfixable)
+- Clean page breaks (no orphaned headings)
+- Margins between 0.4in and 1in
+
+When the PDF meets all requirements, respond with just the word "APPROVED".
 """
 
 
@@ -148,6 +142,29 @@ async def improve_pdf():
     print(f"Max iterations: {MAX_ITERATIONS}")
     print(f"{'='*60}\n")
     
+    # =========================================================================
+    # PREPROCESSING: Auto-fix broken lists before agent starts
+    # =========================================================================
+    print("PREPROCESSING: Auto-fixing broken lists...")
+    print("-" * 40)
+    preprocess_result = preprocess_broken_lists()
+    
+    if preprocess_result.get('success'):
+        print(f"✓ {preprocess_result.get('message')}")
+    else:
+        print(f"⚠ Preprocessing warning: {preprocess_result.get('message', preprocess_result.get('error'))}")
+    
+    # Save snapshot after preprocessing
+    if preprocess_result.get('fixed_count', 0) > 0:
+        save_snapshot(description=f"After preprocessing: fixed {preprocess_result['fixed_count']} broken lists")
+    
+    print("-" * 40)
+    print()
+    
+    # =========================================================================
+    # AGENT SETUP
+    # =========================================================================
+    
     # Create agent with tools
     agent = LlmAgent(
         name="pdf_improver",
@@ -156,8 +173,6 @@ async def improve_pdf():
         description="Expert agent that analyzes PDFs and autonomously fixes quality issues",
         tools=[
             read_file,
-            get_bulleted_list_first_lines,
-            insert_blank_line_before,
             modify_css_property,
             generate_pdf,
             list_changes
@@ -175,8 +190,6 @@ async def improve_pdf():
     
     print("✓ Agent initialized with tools:")
     print("  - read_file")
-    print("  - get_bulleted_list_first_lines")
-    print("  - insert_blank_line_before")
     print("  - modify_css_property")
     print("  - generate_pdf")
     print("  - list_changes")
@@ -188,15 +201,18 @@ async def improve_pdf():
         print(f"ITERATION {iteration}/{MAX_ITERATIONS}")
         print(f"{'='*60}\n")
         
-        # Generate PDF
-        print("Generating PDF...")
-        pdf_result = generate_pdf()
-        
-        if not pdf_result.get('success'):
-            print(f"✗ PDF generation failed: {pdf_result.get('error')}")
-            break
-        
-        print(f"✓ PDF generated: {pdf_result.get('page_count')} pages")
+        # Generate PDF (skip on first iteration - preprocessing already did it)
+        if iteration > 1:
+            print("Generating PDF...")
+            pdf_result = generate_pdf()
+            
+            if not pdf_result.get('success'):
+                print(f"✗ PDF generation failed: {pdf_result.get('error')}")
+                break
+            
+            print(f"✓ PDF generated: {pdf_result.get('page_count')} pages")
+        else:
+            print("Using PDF from preprocessing...")
         
         # Get PDF images for vision analysis
         print("Converting PDF to images...")
@@ -216,14 +232,18 @@ async def improve_pdf():
         prompt_text = f"""
 ITERATION {iteration} OF {MAX_ITERATIONS}
 
-Here are the current PDF page renders. Analyze them for quality issues.
+Here are the current PDF page renders ({len(images)} pages).
 
-If you see problems (especially broken lists showing as inline text with dashes), 
-CALL THE TOOLS to fix them. Do not output JSON - call the tools directly.
+1. PAGE ECONOMY: Look at the LAST PAGE (page {len(images)}). If it's less than ~35% filled,
+   you MUST reduce margins/spacing to fit content on fewer pages.
+
+2. BAD PAGE BREAKS: Check for orphaned headings or awkward page splits.
+
+CALL THE TOOLS to fix any issues. Do not output JSON - call the tools directly.
 
 After fixing issues, call generate_pdf() to regenerate.
 
-If the PDF looks good, respond with "APPROVED".
+If the PDF meets all requirements (good page economy, clean breaks), respond with "APPROVED".
 """
         
         message_parts = [types.Part.from_text(text=prompt_text)]
@@ -306,8 +326,12 @@ def main():
     # Parse command line
     import argparse
     parser = argparse.ArgumentParser(description='ADK-based PDF improvement agent')
-    parser.add_argument('--source', default='x1-basic', 
-                       help='Source markdown name (without .md extension)')
+    parser.add_argument('--source', 
+                        # default='x1-basic', 
+                        # default='x1-premium', 
+                        # default='ath-premium', 
+                        default='art-premium', 
+                        help='Source markdown name (without .md extension)')
     args = parser.parse_args()
     
     # Setup working directory

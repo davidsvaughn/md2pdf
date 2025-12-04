@@ -23,11 +23,9 @@ from openai.types.shared import Reasoning
 from tools import (
     # Agent tools (decorated with @function_tool)
     read_file,
-    insert_blank_line_before,
     insert_page_break_before,
     insert_vertical_space_before,
     modify_css_property,
-    get_bulleted_list_first_lines,
     generate_pdf_tool,
     list_changes_tool,
     # Direct call functions (not decorated)
@@ -35,6 +33,7 @@ from tools import (
     get_pdf_images,
     save_snapshot,
     list_changes,
+    preprocess_broken_lists,  # Auto-fix broken lists before agent starts
 )
 
 load_dotenv()
@@ -57,91 +56,55 @@ def load_instructions() -> str:
 
 Your task is to analyze rendered PDF pages and FIX any formatting issues by calling your available tools.
 
+NOTE: Broken bullet lists have already been fixed in preprocessing. Focus on layout issues.
+
 IMPORTANT: You must CALL TOOLS to make changes. Do NOT output JSON. Call the tools directly.
 
 Available tools:
 - read_file(file_type) - Read "markdown" or "css" file contents
-- get_bulleted_list_first_lines() - Find all bulleted lists and return the first line of each
-- insert_blank_line_before(file_type, search_text) - Insert blank line before text (fixes list parsing)
-- insert_page_break_before(search_text) - Force a page break before specific content
-- insert_vertical_space_before(search_text, amount) - Add vertical space (e.g., "2em", "1in") before content
+- insert_page_break_before(search_text) - Force a page break before content
+- insert_vertical_space_before(search_text, amount) - Add vertical space before content
 - modify_css_property(selector, property, value) - Add/update CSS properties
 - generate_pdf_tool() - Regenerate the PDF after making changes
 - list_changes_tool() - See what changes you've made
 
 ==========================================================================
-ISSUE 1: BROKEN BULLETED LISTS - FIX ALL OF THEM!
+ISSUE 1: PAGE ECONOMY - CRITICAL!
 ==========================================================================
 
-A BROKEN list renders HORIZONTALLY - items flow together as a paragraph.
-A CORRECT list renders VERTICALLY - items are stacked, one per line.
-
-WORKFLOW FOR LISTS:
-1. Look at PDF images - identify ALL lists that are BROKEN (horizontal, not vertical)
-2. Call get_bulleted_list_first_lines() to get the first line of each list
-3. For EVERY BROKEN list, call: insert_blank_line_before("markdown", "<first line>")
-4. DO NOT fix lists that are already rendering vertically!
-
-IMPORTANT: There may be MANY broken lists. Fix ALL of them, not just the first few.
-Call insert_blank_line_before() for each broken list you find. If there are 10 broken
-lists, make 10 calls. If there are 20, make 20 calls. Fix them ALL.
-
-==========================================================================
-ISSUE 2: PAGE ECONOMY - CRITICAL!
-==========================================================================
-
-RULE: If the LAST PAGE is less than ~35% filled (i.e., more than 65% blank),
+RULE: If the LAST PAGE is less than ~35% filled (more than 65% blank),
 you MUST take action to improve page economy.
 
-LOOK AT THE LAST PAGE:
-- If it has only a small amount of content (orphaned text, a few lines),
-  this is WASTEFUL and needs fixing.
-- Estimate: if content on last page takes up less than 1/3 of the page, FIX IT.
-
-TWO OPTIONS:
-
-OPTION A - REDUCE TO FIT (preferred when close):
-If the overflow is small, reduce spacing/margins to fit on fewer pages:
+OPTION A - REDUCE TO FIT:
 - modify_css_property("h1", "margin-top", "0.3em")
 - modify_css_property("h2", "margin-top", "0.3em") 
 - modify_css_property("p", "margin-bottom", "0.4em")
-- modify_css_property("ul", "margin-bottom", "0.3em")
-- modify_css_property("@page", "margin", "0.5in") - can reduce but NOT below 0.4in!
+- modify_css_property("@page", "margin", "0.5in") - NOT below 0.4in!
 
 OPTION B - EXPAND TO FILL:
-If reducing won't work, expand spacing to better fill pages:
 - modify_css_property("@page", "margin", "0.75in")
 - modify_css_property("p", "margin-bottom", "1em")
 
-*** MARGIN LIMITS ***
-- MINIMUM page margin: 0.4in (never go below this - content will look cramped)
-- MAXIMUM page margin: 1in (more than this wastes too much space)
+*** MARGIN LIMITS: 0.4in minimum, 1in maximum ***
 
 ==========================================================================
-ISSUE 3: BAD PAGE BREAKS
+ISSUE 2: BAD PAGE BREAKS
 ==========================================================================
 
-Look for awkward page breaks such as:
-- A heading at the bottom of a page with its content on the next page
-- A list split across pages when it could fit on one
-- Orphaned lines or content that looks disconnected
-
-HOW TO FIX:
-- insert_page_break_before(search_text) - Force content to start on a new page
-- insert_vertical_space_before(search_text, amount) - Push content down to next page
-- modify_css_property("h2", "page-break-after", "avoid") - Prevent breaks after headings
+Fix awkward breaks with:
+- insert_page_break_before(search_text)
+- insert_vertical_space_before(search_text, amount)
+- modify_css_property("h2", "page-break-after", "avoid")
 
 ==========================================================================
+APPROVAL REQUIREMENTS - ALL MUST BE TRUE:
+==========================================================================
 
-After making ALL fixes, call generate_pdf_tool().
+1. Good page economy (last page >35% filled OR unfixable)
+2. Clean page breaks (no orphaned headings, no split content)
+3. Margins between 0.4in and 1in
 
-When the PDF looks good with:
-- No broken lists (you fixed ALL of them)
-- Good page economy (no sparse final pages with <35% content)
-- Clean page breaks
-- Margins between 0.4in and 1in
-
-Respond with "APPROVED".
+Only respond with "APPROVED" when ALL requirements are met.
 """
 
 
@@ -194,6 +157,29 @@ async def improve_pdf():
     print(f"Max iterations: {MAX_ITERATIONS}")
     print(f"{'='*60}\n")
     
+    # =========================================================================
+    # PREPROCESSING: Auto-fix broken lists before agent starts
+    # =========================================================================
+    print("PREPROCESSING: Auto-fixing broken lists...")
+    print("-" * 40)
+    preprocess_result = preprocess_broken_lists()
+    
+    if preprocess_result.get('success'):
+        print(f"✓ {preprocess_result.get('message')}")
+    else:
+        print(f"⚠ Preprocessing warning: {preprocess_result.get('message', preprocess_result.get('error'))}")
+    
+    # Save snapshot after preprocessing
+    if preprocess_result.get('fixed_count', 0) > 0:
+        save_snapshot(description=f"After preprocessing: fixed {preprocess_result['fixed_count']} broken lists")
+    
+    print("-" * 40)
+    print()
+    
+    # =========================================================================
+    # AGENT SETUP
+    # =========================================================================
+    
     # Create agent with tools and reasoning settings
     agent = Agent(
         name="pdf_improver",
@@ -204,8 +190,6 @@ async def improve_pdf():
         ),
         tools=[
             read_file,
-            get_bulleted_list_first_lines,
-            insert_blank_line_before,
             insert_page_break_before,
             insert_vertical_space_before,
             modify_css_property,
@@ -216,8 +200,6 @@ async def improve_pdf():
     
     print("✓ Agent initialized with tools:")
     print("  - read_file")
-    print("  - get_bulleted_list_first_lines")
-    print("  - insert_blank_line_before")
     print("  - insert_page_break_before")
     print("  - insert_vertical_space_before")
     print("  - modify_css_property")
@@ -231,15 +213,18 @@ async def improve_pdf():
         print(f"ITERATION {iteration}/{MAX_ITERATIONS}")
         print(f"{'='*60}\n")
         
-        # Generate PDF
-        print("Generating PDF...")
-        pdf_result = generate_pdf()
-        
-        if not pdf_result.get('success'):
-            print(f"✗ PDF generation failed: {pdf_result.get('error')}")
-            break
-        
-        print(f"✓ PDF generated: {pdf_result.get('page_count')} pages")
+        # Generate PDF (skip on first iteration - preprocessing already did it)
+        if iteration > 1:
+            print("Generating PDF...")
+            pdf_result = generate_pdf()
+            
+            if not pdf_result.get('success'):
+                print(f"✗ PDF generation failed: {pdf_result.get('error')}")
+                break
+            
+            print(f"✓ PDF generated: {pdf_result.get('page_count')} pages")
+        else:
+            print("Using PDF from preprocessing...")
         
         # Get PDF images for vision analysis
         print("Converting PDF to images...")
@@ -257,20 +242,18 @@ async def improve_pdf():
         prompt_text = f"""
 ITERATION {iteration} OF {MAX_ITERATIONS}
 
-Here are the current PDF page images ({len(images)} pages). Check for these issues:
+Here are the current PDF page images ({len(images)} pages). 
 
-1. BROKEN LISTS: If list items flow HORIZONTALLY as a paragraph instead of 
-   being stacked VERTICALLY, the list is broken and needs fixing.
+NOTE: Broken bullet lists have already been fixed. Focus on layout issues:
 
-2. PAGE ECONOMY: Look at the LAST PAGE. If it's less than ~35% filled 
+1. PAGE ECONOMY: Look at the LAST PAGE (page {len(images)}). If it's less than ~35% filled 
    (mostly blank), you MUST reduce margins/spacing to fit content on fewer pages.
-   This is {len(images)} page(s) - if page {len(images)} is mostly empty, FIX IT.
+   
+2. BAD PAGE BREAKS: Headings orphaned at bottom of pages, split content, etc.
 
-3. BAD PAGE BREAKS: Headings orphaned at bottom of pages, split lists, etc.
+Fix any issues you find, then call generate_pdf_tool() to see the results.
 
-Fix ALL issues you find, then call generate_pdf_tool().
-
-If everything looks good (no broken lists, good page economy), respond with "APPROVED".
+If everything looks good (good page economy, clean breaks), respond with "APPROVED".
 """
         
         # Create content parts array with text and images
@@ -376,7 +359,8 @@ def main():
     parser = argparse.ArgumentParser(description='OpenAI SDK-based PDF improvement agent')
     parser.add_argument('--source', 
                         # default='x1-basic',
-                        default='x1-premium',
+                        # default='x1-premium',
+                        default='art-premium',
                         help='Source markdown name (without .md extension)')
     args = parser.parse_args()
     

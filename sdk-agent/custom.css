@@ -1,2 +1,18 @@
 @import url("adwaita.css");  /* or another theme */
 html { font-size: 13px; }
+
+h1 {
+  margin-top: 0.3em;
+}
+
+h2 {
+  margin-top: 0.3em;
+}
+
+p {
+  margin-bottom: 0.4em;
+}
+
+@page {
+  margin: 0.5in;
+}
