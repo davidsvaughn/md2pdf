@@ -7,12 +7,14 @@ Overall, the opportunity and team are compelling, but the story is stronger on v
 ## Summary Assessment
 
 **What stands out positively**
+
 - X1 addresses a very real, widely recognized problem: fundraising and deal flow are slow, manual, and scattered across many tools. This resonates strongly with both founders and investors.
 - The team is unusually strong on AI, systems engineering, and venture intelligence for this stage, with dedicated roles around AI and investment methodology.
 - The product is designed as AI-native from the ground up, with an Investability Score, automated deck analysis, matching, and agents for research and due diligence.
 - Early traction is promising: over 10,000 startups evaluated with zero marketing spend, plus positive testimonials and a win at the European Business Angels pitch competition.
 
 **Main concerns and risks**
+
 - The scope is very broad: X1 wants to be a solution for fundraising, deal flow, hiring, CRM, conferencing, corporate scouting, and more. This can dilute focus and make execution harder.
 - Key numbers are missing. There is no clear disclosure of current revenue, paying customers, or user retention, and investor-side adoption is implied rather than quantified.
 - The technology is promising but not yet clearly defensible. The scoring system and AI workflows sound useful, but there are no patents today, and competitors could build similar models.

@@ -25,7 +25,8 @@ from tools import (
     generate_pdf,
     get_pdf_images,
     save_snapshot,
-    list_changes
+    list_changes,
+    get_bulleted_list_first_lines
 )
 
 load_dotenv()
@@ -51,14 +52,36 @@ IMPORTANT: You must CALL TOOLS to make changes. Do NOT output JSON. Call the too
 
 Available tools:
 - read_file(file_type) - Read "markdown" or "css" file contents
+- get_bulleted_list_first_lines() - Find all bulleted lists and return the first line of each
 - insert_blank_line_before(file_type, search_text) - Insert blank line before text (fixes list parsing issues)
 - modify_css_property(selector, property, value) - Add/update CSS properties
 - generate_pdf() - Regenerate the PDF after making changes
 - list_changes() - See what changes you've made
 
 Common issues and how to fix them:
-1. BROKEN LISTS (items appear inline with dashes instead of vertical bullets):
-   - Call insert_blank_line_before("markdown", "- first item text") to add blank line before the list
+
+1. BROKEN LISTS - This is a critical issue to identify correctly!
+
+   WHAT A BROKEN LIST LOOKS LIKE IN THE PDF:
+   - Text flows as a continuous paragraph
+   - You see literal dash characters "-" or asterisks "*" in the text
+   - Items are NOT stacked vertically
+   - Example: "- item one - item two - item three" all on one or wrapped lines
+   
+   WHAT A CORRECT LIST LOOKS LIKE IN THE PDF:
+   - Items are stacked VERTICALLY, one per line
+   - Each item has a bullet SYMBOL (•, ◦, ▪) - NOT a dash character
+   - No visible "-" or "*" characters at the start of items
+   
+   HOW TO FIX:
+   a) FIRST: Look at each list in the PDF image carefully
+   b) Call get_bulleted_list_first_lines() to get all list first lines
+   c) For ONLY the lists that are BROKEN (show visible dashes), call:
+      insert_blank_line_before("markdown", "<first line text>")
+   d) SKIP any list that already shows bullet symbols (•, ◦) - these are CORRECT!
+   
+   CRITICAL: Do NOT fix lists that are already rendering correctly with bullet symbols!
+   The tool gives you ALL lists - you must visually verify which ones need fixing.
    
 2. Poor spacing/pagination:
    - Call modify_css_property("@page", "margin", "0.5in") to adjust page margins
@@ -68,8 +91,8 @@ Common issues and how to fix them:
    - Reduce margins or spacing with modify_css_property
 
 WORKFLOW:
-1. Analyze the PDF images I send you
-2. If you see problems, CALL the appropriate tools to fix them
+1. CAREFULLY analyze the PDF images - identify exactly which lists are broken vs correct
+2. Only fix the specific lists that show visible dashes (broken rendering)
 3. After making fixes, call generate_pdf() to regenerate the PDF
 4. I will send you updated images for the next iteration
 
@@ -133,6 +156,7 @@ async def improve_pdf():
         description="Expert agent that analyzes PDFs and autonomously fixes quality issues",
         tools=[
             read_file,
+            get_bulleted_list_first_lines,
             insert_blank_line_before,
             modify_css_property,
             generate_pdf,
@@ -151,6 +175,7 @@ async def improve_pdf():
     
     print("✓ Agent initialized with tools:")
     print("  - read_file")
+    print("  - get_bulleted_list_first_lines")
     print("  - insert_blank_line_before")
     print("  - modify_css_property")
     print("  - generate_pdf")

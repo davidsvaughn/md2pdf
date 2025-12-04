@@ -15,12 +15,12 @@ This proof-of-concept demonstrates:
 1. **Install dependencies:**
    ```bash
    cd /home/david/code/x1/md2pdf
-   uv pip install -r report-agent/requirements.txt
+   uv pip install -r adk-agent/requirements.txt
    ```
 
 2. **Set up environment:**
    ```bash
-   cd report-agent
+   cd adk-agent
    cp .env.example .env
    # Edit .env and add your GOOGLE_API_KEY
    ```
@@ -28,7 +28,7 @@ This proof-of-concept demonstrates:
 ## Usage
 
 ```bash
-cd /home/david/code/x1/md2pdf/report-agent
+cd /home/david/code/x1/md2pdf/adk-agent
 python agent.py --source x1-basic
 ```
 
@@ -61,14 +61,14 @@ The agent has 5 tools at its disposal:
 
 ## Output
 
-- **Working files**: `report-agent/document.md`, `report-agent/custom.css`
-- **Final PDF**: `report-agent/output.pdf`
-- **Snapshots**: `report-agent/snapshots/` (automatic backups)
+- **Working files**: `adk-agent/document.md`, `adk-agent/custom.css`
+- **Final PDF**: `adk-agent/output.pdf`
+- **Snapshots**: `adk-agent/snapshots/` (automatic backups)
 
 ## Architecture
 
 ```
-report-agent/
+adk-agent/
 ├── agent.py          # Main agent loop with ADK
 ├── tools.py          # Tool implementations
 ├── requirements.txt  # Dependencies

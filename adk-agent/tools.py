@@ -433,7 +433,7 @@ from typing import List
 _BULLET_RE = re.compile(r'^(\s*)([*+-])\s+.+$')
 _HRULE_RE = re.compile(r'^\s*([-*_])(?:\s*\1){2,}\s*$')  # --- , ***, ___ (3+)
 
-def first_lines_of_bulleted_lists(md: str) -> List[str]:
+def _first_lines_of_bulleted_lists(md: str) -> List[str]:
     """
     Return the full first line (including indentation and bullet symbol)
     for each bulleted list block in the Markdown string `md`.
@@ -470,10 +470,39 @@ def first_lines_of_bulleted_lists(md: str) -> List[str]:
     return out
 
 
+def get_bulleted_list_first_lines() -> Dict:
+    """Find all bulleted lists in the markdown document and return the first line of each.
+    
+    This is useful for identifying lists that may not have rendered correctly in the PDF.
+    Use the returned first lines with insert_blank_line_before() to fix list parsing issues.
+    
+    Returns:
+        {
+            'success': bool,
+            'first_lines': list[str],  # First line of each bulleted list
+            'count': int  # Number of bulleted lists found
+        }
+    """
+    if not MD_FILE.exists():
+        return {
+            'success': False,
+            'error': 'Markdown file not found'
+        }
+    
+    content = MD_FILE.read_text(encoding='utf-8')
+    first_lines = _first_lines_of_bulleted_lists(content)
+    
+    return {
+        'success': True,
+        'first_lines': first_lines,
+        'count': len(first_lines)
+    }
+
+
 if __name__ == "__main__":
     # load docs/x1-basic.md and print first lines of bulleted lists
     md_path = Path(__file__).parent.parent / "docs" / "x1-basic.md"
     md_content = md_path.read_text(encoding="utf-8")
-    lists = first_lines_of_bulleted_lists(md_content)
+    lists = _first_lines_of_bulleted_lists(md_content)
     for line in lists:
         print(line)

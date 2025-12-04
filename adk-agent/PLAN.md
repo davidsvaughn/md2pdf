@@ -228,7 +228,7 @@ asyncio.run(improve_pdf())
 ## File Structure (POC - Minimal)
 
 ```
-report-agent/
+adk-agent/
 ├── tools.py          # All tool implementations
 ├── agent.py          # Agent setup and main loop
 ├── requirements.txt  # Dependencies
