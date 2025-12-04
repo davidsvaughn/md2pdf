@@ -14,7 +14,8 @@ from dotenv import load_dotenv
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agents import Agent, Runner
+from agents import Agent, Runner, ItemHelpers, ModelSettings
+from openai.types.shared import Reasoning
 
 # Import our tools
 # Functions decorated with @function_tool are for the agent to call
@@ -40,6 +41,7 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "5"))
 MODEL = os.getenv("MODEL", "gpt-4o")  # Vision-capable model
+REASONING_EFFORT = os.getenv("REASONING_EFFORT", "medium")  # minimal, low, medium, high
 
 # Paths
 WORK_DIR = Path(__file__).parent
@@ -156,14 +158,18 @@ async def improve_pdf():
     print(f"PDF IMPROVEMENT AGENT - OpenAI SDK")
     print(f"{'='*60}")
     print(f"Model: {MODEL}")
+    print(f"Reasoning effort: {REASONING_EFFORT}")
     print(f"Max iterations: {MAX_ITERATIONS}")
     print(f"{'='*60}\n")
     
-    # Create agent with tools
+    # Create agent with tools and reasoning settings
     agent = Agent(
         name="pdf_improver",
         model=MODEL,
         instructions=instructions,
+        model_settings=ModelSettings(
+            reasoning=Reasoning(effort=REASONING_EFFORT),
+        ),
         tools=[
             read_file,
             get_bulleted_list_first_lines,
@@ -210,32 +216,30 @@ async def improve_pdf():
         print(f"✓ Converted to {len(images)} images")
         
         # Build multimodal message for OpenAI Agents SDK
-        # The SDK requires messages in the format: [{"role": "user", "content": [...]}]
+        # The SDK uses specific content types: 'input_text' and 'input_image'
+        # input_image uses 'image_url' field with data URL or https URL
         prompt_text = f"""
 ITERATION {iteration} OF {MAX_ITERATIONS}
 
-Here are the current PDF page renders. Analyze them for quality issues.
+Here are the current PDF page images. Examine each list carefully:
+- If items are stacked VERTICALLY (one per line) → list is CORRECT, leave it alone
+- If items flow HORIZONTALLY (as a paragraph) → list is BROKEN, needs fixing
 
-If you see problems (especially broken lists showing as inline text with dashes), 
-CALL THE TOOLS to fix them. Do not output JSON - call the tools directly.
+Follow the MANDATORY WORKFLOW from your instructions. Only fix BROKEN lists.
 
-After fixing issues, call generate_pdf_tool() to regenerate.
-
-If the PDF looks good, respond with "APPROVED".
+If the PDF looks good with no broken lists, respond with "APPROVED".
 """
         
         # Create content parts array with text and images
-        content_parts = [{"type": "text", "text": prompt_text}]
+        content_parts = [{"type": "input_text", "text": prompt_text}]
         
         for idx, img_bytes in enumerate(images):
-            # Convert to base64 data URL
+            # Convert to base64 data URL for OpenAI Agents SDK
             b64_img = base64.b64encode(img_bytes).decode('utf-8')
             content_parts.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/jpeg;base64,{b64_img}",
-                    "detail": "high"
-                }
+                "type": "input_image",
+                "image_url": f"data:image/jpeg;base64,{b64_img}",
+                "detail": "high"
             })
         
         # Wrap in proper message format
@@ -254,8 +258,36 @@ If the PDF looks good, respond with "APPROVED".
                 input=[user_message]  # Pass as a list of messages
             )
             
-            # Print agent's response
-            print(f"[Agent Response]: {result.final_output}\n")
+            # Print all items from the run to see the agent's reasoning
+            print("\n" + "="*60)
+            print("AGENT REASONING AND ACTIONS:")
+            print("="*60)
+            for item in result.new_items:
+                if item.type == "reasoning_item":
+                    # Extended thinking / reasoning (from reasoning=high setting)
+                    if hasattr(item, 'summary') and item.summary:
+                        print(f"\n[REASONING SUMMARY]:\n{item.summary}")
+                    if hasattr(item, 'raw_item'):
+                        for part in getattr(item.raw_item, 'summary', []):
+                            if hasattr(part, 'text'):
+                                print(f"\n[REASONING]:\n{part.text}")
+                elif item.type == "message_output_item":
+                    # Agent's text messages (reasoning)
+                    text = ItemHelpers.text_message_output(item)
+                    print(f"\n[AGENT MESSAGE]:\n{text}")
+                elif item.type == "tool_call_item":
+                    # Tool being called
+                    print(f"\n[TOOL CALL]: {item.raw_item.name}({item.raw_item.arguments})")
+                elif item.type == "tool_call_output_item":
+                    # Tool result (truncate if too long)
+                    output = str(item.output)
+                    if len(output) > 500:
+                        output = output[:500] + "..."
+                    print(f"[TOOL RESULT]: {output}")
+            print("="*60 + "\n")
+            
+            # Print agent's final response
+            print(f"[Final Output]: {result.final_output}\n")
             
             # Check for approval
             if 'APPROVED' in result.final_output.upper():
