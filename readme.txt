@@ -13,3 +13,10 @@ python md2pdf.py x1-premium.md x1-premium.pdf --theme adwaita-sepia --html-out p
 python md2pdf.py x1-basic.md x1-basic.pdf --css css/custom.css
 
 python md2pdf.py x1-premium.md x1-premium.pdf --css css/custom.css
+
+
+-----------------------------------------------------
+
+
+python flatten_json_to_md.py docs/research_ArtCentrica.json -o docs/research_ArtCentrica.md
+Optional flags: --separator to change the dot separator, --encoding to control file encoding.
