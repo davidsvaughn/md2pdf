@@ -24,6 +24,8 @@ from tools import (
     # Agent tools (decorated with @function_tool)
     read_file,
     insert_blank_line_before,
+    insert_page_break_before,
+    insert_vertical_space_before,
     modify_css_property,
     get_bulleted_list_first_lines,
     generate_pdf_tool,
@@ -53,63 +55,93 @@ def load_instructions() -> str:
     """Return agent instructions that tell it to USE tools, not output JSON"""
     return """You are an expert PDF quality improvement agent.
 
-The goal is to generate a professionally formatted PDF from provided Markdown and CSS files.
-The PDF report MUST look slick and professional - it will be given to potential investors.
-The stakes are high here - the PDF must look flawless. If not, millions of dollars could be lost.
-Your task is to analyze rendered PDF pages and FIX any issues you find by calling your available tools.
+Your task is to analyze rendered PDF pages and FIX any formatting issues by calling your available tools.
 
 IMPORTANT: You must CALL TOOLS to make changes. Do NOT output JSON. Call the tools directly.
 
 Available tools:
 - read_file(file_type) - Read "markdown" or "css" file contents
 - get_bulleted_list_first_lines() - Find all bulleted lists and return the first line of each
-- insert_blank_line_before(file_type, search_text) - Insert blank line before text (fixes list parsing issues)
+- insert_blank_line_before(file_type, search_text) - Insert blank line before text (fixes list parsing)
+- insert_page_break_before(search_text) - Force a page break before specific content
+- insert_vertical_space_before(search_text, amount) - Add vertical space (e.g., "2em", "1in") before content
 - modify_css_property(selector, property, value) - Add/update CSS properties
 - generate_pdf_tool() - Regenerate the PDF after making changes
 - list_changes_tool() - See what changes you've made
 
-Some common issues and how to fix them:
+==========================================================================
+ISSUE 1: BROKEN BULLETED LISTS - FIX ALL OF THEM!
+==========================================================================
 
-1. BROKEN LISTS - This is a critical issue to identify correctly!
+A BROKEN list renders HORIZONTALLY - items flow together as a paragraph.
+A CORRECT list renders VERTICALLY - items are stacked, one per line.
 
-   WHAT A BROKEN LIST LOOKS LIKE IN THE PDF:
-   - Text flows as a continuous paragraph
-   - You see literal dash characters "-" or asterisks "*" in the text
-   - Items are NOT stacked vertically
-   - Example: "- item one - item two - item three" all on one or wrapped lines
-   
-   WHAT A CORRECT LIST LOOKS LIKE IN THE PDF:
-   - Items are stacked VERTICALLY, one per line, with same indentation
-   
-   HOW TO FIX:
-   a) FIRST: Call get_bulleted_list_first_lines() to get all list first lines
-   b) Look at each list in the PDF image carefully
-   c) For ONLY the lists that are BROKEN (NOT stacked vertically), call:
-      insert_blank_line_before("markdown", "<first line text>")
-   d) SKIP any list that is already rendering correctly!
-   
-   CRITICAL: Do NOT fix lists that are already rendering correctly!
-   The tool should give you all lists - you must visually verify which ones need fixing.
-   There may be other intended bullet lists missed by the tool - use your judgment.
-   
-2. Poor spacing/pagination - Example fixes:
-   - Call modify_css_property("@page", "margin", "0.5in") to adjust page margins
-   - Call modify_css_property("h2", "margin-top", "0.3em") to reduce heading spacing
+WORKFLOW FOR LISTS:
+1. Look at PDF images - identify ALL lists that are BROKEN (horizontal, not vertical)
+2. Call get_bulleted_list_first_lines() to get the first line of each list
+3. For EVERY BROKEN list, call: insert_blank_line_before("markdown", "<first line>")
+4. DO NOT fix lists that are already rendering vertically!
 
-3. Orphaned content on last page:
-   - Reduce margins or spacing with modify_css_property to fit content better
-   
-There may be other format/layout issues you identify - use your judgment to fix them with the tools.
-Only attempt to fix issues you have the tools to fix.
+IMPORTANT: There may be MANY broken lists. Fix ALL of them, not just the first few.
+Call insert_blank_line_before() for each broken list you find. If there are 10 broken
+lists, make 10 calls. If there are 20, make 20 calls. Fix them ALL.
 
-WORKFLOW:
-1. CAREFULLY analyze the PDF images - identify exactly which lists are broken vs correct
-2. Only fix the specific lists that are BROKEN (NOT stacked vertically)
-3. Fix any other format/layout issues you find using the appropriate tools
-4. After making fixes, call generate_pdf_tool() to regenerate the PDF
-5. I will send you updated images for the next iteration
+==========================================================================
+ISSUE 2: PAGE ECONOMY - CRITICAL!
+==========================================================================
 
-When the PDF looks good and all issues are fixed, respond with just the word "APPROVED".
+RULE: If the LAST PAGE is less than ~35% filled (i.e., more than 65% blank),
+you MUST take action to improve page economy.
+
+LOOK AT THE LAST PAGE:
+- If it has only a small amount of content (orphaned text, a few lines),
+  this is WASTEFUL and needs fixing.
+- Estimate: if content on last page takes up less than 1/3 of the page, FIX IT.
+
+TWO OPTIONS:
+
+OPTION A - REDUCE TO FIT (preferred when close):
+If the overflow is small, reduce spacing/margins to fit on fewer pages:
+- modify_css_property("h1", "margin-top", "0.3em")
+- modify_css_property("h2", "margin-top", "0.3em") 
+- modify_css_property("p", "margin-bottom", "0.4em")
+- modify_css_property("ul", "margin-bottom", "0.3em")
+- modify_css_property("@page", "margin", "0.5in") - can reduce but NOT below 0.4in!
+
+OPTION B - EXPAND TO FILL:
+If reducing won't work, expand spacing to better fill pages:
+- modify_css_property("@page", "margin", "0.75in")
+- modify_css_property("p", "margin-bottom", "1em")
+
+*** MARGIN LIMITS ***
+- MINIMUM page margin: 0.4in (never go below this - content will look cramped)
+- MAXIMUM page margin: 1in (more than this wastes too much space)
+
+==========================================================================
+ISSUE 3: BAD PAGE BREAKS
+==========================================================================
+
+Look for awkward page breaks such as:
+- A heading at the bottom of a page with its content on the next page
+- A list split across pages when it could fit on one
+- Orphaned lines or content that looks disconnected
+
+HOW TO FIX:
+- insert_page_break_before(search_text) - Force content to start on a new page
+- insert_vertical_space_before(search_text, amount) - Push content down to next page
+- modify_css_property("h2", "page-break-after", "avoid") - Prevent breaks after headings
+
+==========================================================================
+
+After making ALL fixes, call generate_pdf_tool().
+
+When the PDF looks good with:
+- No broken lists (you fixed ALL of them)
+- Good page economy (no sparse final pages with <35% content)
+- Clean page breaks
+- Margins between 0.4in and 1in
+
+Respond with "APPROVED".
 """
 
 
@@ -174,6 +206,8 @@ async def improve_pdf():
             read_file,
             get_bulleted_list_first_lines,
             insert_blank_line_before,
+            insert_page_break_before,
+            insert_vertical_space_before,
             modify_css_property,
             generate_pdf_tool,
             list_changes_tool
@@ -184,6 +218,8 @@ async def improve_pdf():
     print("  - read_file")
     print("  - get_bulleted_list_first_lines")
     print("  - insert_blank_line_before")
+    print("  - insert_page_break_before")
+    print("  - insert_vertical_space_before")
     print("  - modify_css_property")
     print("  - generate_pdf_tool")
     print("  - list_changes_tool")
@@ -221,13 +257,20 @@ async def improve_pdf():
         prompt_text = f"""
 ITERATION {iteration} OF {MAX_ITERATIONS}
 
-Here are the current PDF page images. Examine each list carefully:
-- If items are stacked VERTICALLY (one per line) → list is CORRECT, leave it alone
-- If items flow HORIZONTALLY (as a paragraph) → list is BROKEN, needs fixing
+Here are the current PDF page images ({len(images)} pages). Check for these issues:
 
-Follow the MANDATORY WORKFLOW from your instructions. Only fix BROKEN lists.
+1. BROKEN LISTS: If list items flow HORIZONTALLY as a paragraph instead of 
+   being stacked VERTICALLY, the list is broken and needs fixing.
 
-If the PDF looks good with no broken lists, respond with "APPROVED".
+2. PAGE ECONOMY: Look at the LAST PAGE. If it's less than ~35% filled 
+   (mostly blank), you MUST reduce margins/spacing to fit content on fewer pages.
+   This is {len(images)} page(s) - if page {len(images)} is mostly empty, FIX IT.
+
+3. BAD PAGE BREAKS: Headings orphaned at bottom of pages, split lists, etc.
+
+Fix ALL issues you find, then call generate_pdf_tool().
+
+If everything looks good (no broken lists, good page economy), respond with "APPROVED".
 """
         
         # Create content parts array with text and images
@@ -331,8 +374,10 @@ def main():
     # Parse command line
     import argparse
     parser = argparse.ArgumentParser(description='OpenAI SDK-based PDF improvement agent')
-    parser.add_argument('--source', default='x1-basic', 
-                       help='Source markdown name (without .md extension)')
+    parser.add_argument('--source', 
+                        # default='x1-basic',
+                        default='x1-premium',
+                        help='Source markdown name (without .md extension)')
     args = parser.parse_args()
     
     # Setup working directory

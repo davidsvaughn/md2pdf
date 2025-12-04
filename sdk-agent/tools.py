@@ -138,6 +138,113 @@ def insert_blank_line_before(file_type: str, search_text: str) -> Dict:
 
 
 @function_tool
+def insert_page_break_before(search_text: str) -> Dict:
+    """Insert a page break before the specified text in the markdown file.
+    
+    Use this to force content to start on a new page. Useful for:
+    - Starting a new section on a fresh page
+    - Avoiding awkward page breaks in the middle of content
+    
+    Args:
+        search_text: Text to search for (the page break will be inserted before this line)
+    
+    Returns:
+        {
+            'success': bool,
+            'line_number': int,
+            'message': str
+        }
+    """
+    save_snapshot(description=f"before insert_page_break")
+    
+    if not MD_FILE.exists():
+        return {'success': False, 'error': 'Markdown file not found'}
+    
+    content = MD_FILE.read_text(encoding='utf-8')
+    lines = content.splitlines(keepends=True)
+    
+    # Find the line containing the search text
+    search_lower = search_text.lower()
+    found_line = -1
+    
+    for i, line in enumerate(lines):
+        if search_lower in line.lower():
+            found_line = i
+            break
+    
+    if found_line == -1:
+        return {'success': False, 'error': f'Text not found: "{search_text}"'}
+    
+    # Insert page break div before the found line
+    page_break_html = '<div style="page-break-before: always;"></div>\n\n'
+    lines.insert(found_line, page_break_html)
+    
+    # Write back
+    MD_FILE.write_text(''.join(lines), encoding='utf-8')
+    
+    return {
+        'success': True,
+        'line_number': found_line + 1,
+        'message': f'Inserted page break before line {found_line + 1}'
+    }
+
+
+@function_tool
+def insert_vertical_space_before(search_text: str, amount: str = "2em") -> Dict:
+    """Insert vertical spacing before the specified text in the markdown file.
+    
+    Use this to add space before specific content. Useful for:
+    - Pushing content down to avoid awkward page breaks
+    - Adding breathing room before sections
+    - Nudging a heading to the next page
+    
+    Args:
+        search_text: Text to search for (space will be inserted before this line)
+        amount: CSS size value for the space (e.g., "1em", "2em", "20px", "0.5in")
+    
+    Returns:
+        {
+            'success': bool,
+            'line_number': int,
+            'message': str
+        }
+    """
+    save_snapshot(description=f"before insert_vertical_space")
+    
+    if not MD_FILE.exists():
+        return {'success': False, 'error': 'Markdown file not found'}
+    
+    content = MD_FILE.read_text(encoding='utf-8')
+    lines = content.splitlines(keepends=True)
+    
+    # Find the line containing the search text
+    search_lower = search_text.lower()
+    found_line = -1
+    
+    for i, line in enumerate(lines):
+        if search_lower in line.lower():
+            found_line = i
+            break
+    
+    if found_line == -1:
+        return {'success': False, 'error': f'Text not found: "{search_text}"'}
+    
+    # Insert spacer div before the found line
+    spacer_html = f'<div style="margin-top: {amount};"></div>\n\n'
+    lines.insert(found_line, spacer_html)
+    
+    # Write back
+    MD_FILE.write_text(''.join(lines), encoding='utf-8')
+    
+    return {
+        'success': True,
+        'line_number': found_line + 1,
+        'amount': amount,
+        'message': f'Inserted {amount} vertical space before line {found_line + 1}'
+    }
+
+
+@function_tool
 def modify_css_property(selector: str, property: str, value: str) -> Dict:
     """Add or update CSS property for a selector.
     
@@ -153,6 +260,22 @@ def modify_css_property(selector: str, property: str, value: str) -> Dict:
             'full_rule': str  # the complete CSS rule
         }
     """
+    # Enforce minimum page margin of 0.4in
+    if selector == "@page" and property == "margin":
+        # Parse the value to check if it's below minimum
+        val_lower = value.lower().strip()
+        try:
+            if val_lower.endswith('in'):
+                num = float(val_lower[:-2])
+                if num < 0.4:
+                    value = "0.4in"  # Enforce minimum
+            elif val_lower.endswith('cm'):
+                num = float(val_lower[:-2])
+                if num < 1.0:  # ~0.4in = ~1cm
+                    value = "0.4in"
+        except ValueError:
+            pass  # Keep original value if parsing fails
+    
     # Auto-save snapshot before modification
     save_snapshot(description=f"before modify_css {selector}")
     
@@ -527,8 +650,9 @@ def get_bulleted_list_first_lines() -> Dict:
 
 if __name__ == "__main__":
     # load docs/x1-basic.md and print first lines of bulleted lists
-    md_path = Path(__file__).parent.parent / "docs" / "x1-basic.md"
+    # md_path = Path(__file__).parent.parent / "docs" / "x1-basic.md"
+    md_path = Path(__file__).parent.parent / "docs" / "x1-premium.md"
     md_content = md_path.read_text(encoding="utf-8")
     lists = _first_lines_of_bulleted_lists(md_content)
     for line in lists:
-        print(line)
+        print(f'\n{line}')
