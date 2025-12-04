@@ -209,8 +209,8 @@ async def improve_pdf():
         
         print(f"✓ Converted to {len(images)} images")
         
-        # Build multimodal message for OpenAI
-        # The OpenAI SDK expects images as base64 data URLs or URLs
+        # Build multimodal message for OpenAI Agents SDK
+        # The SDK requires messages in the format: [{"role": "user", "content": [...]}]
         prompt_text = f"""
 ITERATION {iteration} OF {MAX_ITERATIONS}
 
@@ -219,13 +219,12 @@ Here are the current PDF page renders. Analyze them for quality issues.
 If you see problems (especially broken lists showing as inline text with dashes), 
 CALL THE TOOLS to fix them. Do not output JSON - call the tools directly.
 
-After fixing issues, call generate_pdf() to regenerate.
+After fixing issues, call generate_pdf_tool() to regenerate.
 
 If the PDF looks good, respond with "APPROVED".
 """
         
-        # Create user message with images
-        # OpenAI SDK uses a different format - we'll pass images as base64 data URLs
+        # Create content parts array with text and images
         content_parts = [{"type": "text", "text": prompt_text}]
         
         for idx, img_bytes in enumerate(images):
@@ -239,14 +238,20 @@ If the PDF looks good, respond with "APPROVED".
                 }
             })
         
+        # Wrap in proper message format
+        user_message = {
+            "role": "user",
+            "content": content_parts
+        }
+        
         # Run agent with multimodal input
         print("\nSending to agent for analysis...\n")
         
         try:
-            # Use Runner.run with the multimodal content
+            # Use Runner.run with the properly formatted message
             result = await Runner.run(
                 agent,
-                input=content_parts  # Pass the content parts directly
+                input=[user_message]  # Pass as a list of messages
             )
             
             # Print agent's response
