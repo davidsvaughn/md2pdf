@@ -2,7 +2,7 @@
 docs/preview.html
 *.pdf
 adk-agent/snapshots/
-
+sdk-agent/snapshots/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -211,3 +211,4 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+sdk-agent/snapshots/snapshot_001/custom.css
