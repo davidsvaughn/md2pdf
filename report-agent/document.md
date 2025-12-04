@@ -24,6 +24,7 @@ Overall, the opportunity and team are compelling, but the story is stronger on v
 2. **Publish concrete traction metrics** (MRR/ARR, number of paying customers, DAU/MAU, retention, investor usage) to convert the story from \"exciting vision\" to \"execution in progress.\"
 3. **Clarify who pays and for what**, simplifying the business model initially to one or two core revenue streams with clear pricing.
 4. **Build stronger defensibility** by:
+
    - documenting and sharing a high-level methodology for the Investability Score,
    - emphasizing how growing proprietary data improves the models, and
    - pursuing relevant patents or unique data/feedback loops.

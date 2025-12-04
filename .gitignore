@@ -1,7 +1,7 @@
 # misc
 docs/preview.html
 *.pdf
-css/custom (copy).css
+report-agent/snapshots/
 
 
 # Byte-compiled / optimized / DLL files

@@ -425,3 +425,55 @@ def list_changes() -> Dict:
     
     changes['success'] = True
     return changes
+
+# tool to find all bulleted lists in a markdown file (loaded into a string) and for each list, return the first line
+import re
+from typing import List
+
+_BULLET_RE = re.compile(r'^(\s*)([*+-])\s+.+$')
+_HRULE_RE = re.compile(r'^\s*([-*_])(?:\s*\1){2,}\s*$')  # --- , ***, ___ (3+)
+
+def first_lines_of_bulleted_lists(md: str) -> List[str]:
+    """
+    Return the full first line (including indentation and bullet symbol)
+    for each bulleted list block in the Markdown string `md`.
+    Recognizes '-', '*', and '+' as list bullets.
+    """
+    lines = md.splitlines()
+    n = len(lines)
+    out: List[str] = []
+
+    def is_bullet(idx: int):
+        line = lines[idx]
+        if not _BULLET_RE.match(line):
+            return False
+        # Ignore horizontal rules (---, ***, ___)
+        if _HRULE_RE.match(line.strip()):
+            return False
+        return True
+
+    i = 0
+    while i < n:
+        if is_bullet(i):
+            prev_bullet = is_bullet(i - 1) if i > 0 else False
+            prev_blank = (i == 0 or lines[i - 1].strip() == "")
+            if not prev_bullet or prev_blank:
+                out.append(lines[i])
+                # Skip the rest of this list block
+                j = i + 1
+                while j < n and (is_bullet(j) or lines[j].strip() == "" or lines[j].startswith(" ")):
+                    j += 1
+                i = j
+                continue
+        i += 1
+
+    return out
+
+
+if __name__ == "__main__":
+    # load docs/x1-basic.md and print first lines of bulleted lists
+    md_path = Path(__file__).parent.parent / "docs" / "x1-basic.md"
+    md_content = md_path.read_text(encoding="utf-8")
+    lists = first_lines_of_bulleted_lists(md_content)
+    for line in lists:
+        print(line)

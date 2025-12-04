@@ -42,23 +42,39 @@ DOCS_DIR = WORK_DIR.parent / "docs"
 PROMPTS_DIR = WORK_DIR.parent / "prompts"
 
 def load_instructions() -> str:
-    """Load agent instructions from p4.md"""
-    instructions_file = PROMPTS_DIR / "p4.md"
-    
-    if not instructions_file.exists():
-        return """You are an expert PDF quality improvement agent.
-        
-Your task is to analyze rendered PDF pages and use your available tools to fix any issues.
+    """Return agent instructions that tell it to USE tools, not output JSON"""
+    return """You are an expert PDF quality improvement agent.
 
-Common issues and fixes:
-- Lists appearing as inline text with dashes → Use insert_blank_line_before() to add space before the list
-- Poor spacing/pagination → Use modify_css_property() to adjust margins/padding
-- Text overflow or cut-off → Adjust CSS properties
+Your task is to analyze rendered PDF pages and FIX any issues you find by calling your available tools.
 
-When you're satisfied with the quality, respond with "APPROVED" to end the process.
+IMPORTANT: You must CALL TOOLS to make changes. Do NOT output JSON. Call the tools directly.
+
+Available tools:
+- read_file(file_type) - Read "markdown" or "css" file contents
+- insert_blank_line_before(file_type, search_text) - Insert blank line before text (fixes list parsing issues)
+- modify_css_property(selector, property, value) - Add/update CSS properties
+- generate_pdf() - Regenerate the PDF after making changes
+- list_changes() - See what changes you've made
+
+Common issues and how to fix them:
+1. BROKEN LISTS (items appear inline with dashes instead of vertical bullets):
+   - Call insert_blank_line_before("markdown", "- first item text") to add blank line before the list
+   
+2. Poor spacing/pagination:
+   - Call modify_css_property("@page", "margin", "0.5in") to adjust page margins
+   - Call modify_css_property("h2", "margin-top", "0.3em") to reduce heading spacing
+
+3. Orphaned content on last page:
+   - Reduce margins or spacing with modify_css_property
+
+WORKFLOW:
+1. Analyze the PDF images I send you
+2. If you see problems, CALL the appropriate tools to fix them
+3. After making fixes, call generate_pdf() to regenerate the PDF
+4. I will send you updated images for the next iteration
+
+When the PDF looks good and all issues are fixed, respond with just the word "APPROVED".
 """
-    
-    return instructions_file.read_text(encoding='utf-8')
 
 
 def setup_working_directory(source_name: str = "x1-basic"):
@@ -127,8 +143,8 @@ async def improve_pdf():
     # Create runner
     runner = InMemoryRunner(agent=agent)
     
-    # Create session explicitly (required for run_async)
-    session = runner.session_service.create_session(
+    # Create session explicitly (async operation)
+    session = await runner.session_service.create_session(
         app_name=runner.app_name,
         user_id="user"
     )
@@ -175,22 +191,14 @@ async def improve_pdf():
         prompt_text = f"""
 ITERATION {iteration} OF {MAX_ITERATIONS}
 
-Analyze the PDF page renders below and determine if quality is acceptable.
+Here are the current PDF page renders. Analyze them for quality issues.
 
-You have access to these tools:
-- read_file(file_type) - Read markdown or CSS content
-- insert_blank_line_before(file_type, search_text) - Add blank line (common fix for list parsing)
-- modify_css_property(selector, property, value) - Adjust CSS for spacing/pagination
-- generate_pdf() - Regenerate PDF after changes
-- list_changes() - See what you've modified
+If you see problems (especially broken lists showing as inline text with dashes), 
+CALL THE TOOLS to fix them. Do not output JSON - call the tools directly.
 
-CURRENT FILES:
-- Markdown: {md_content.get('line_count', 0)} lines
-- CSS: {css_content.get('line_count', 0)} lines
+After fixing issues, call generate_pdf() to regenerate.
 
-CRITICAL: Check for broken lists (items appearing as inline text with dashes instead of vertical bullets).
-
-When satisfied with quality, respond with "APPROVED" to end the process.
+If the PDF looks good, respond with "APPROVED".
 """
         
         message_parts = [types.Part.from_text(text=prompt_text)]
@@ -201,12 +209,12 @@ When satisfied with quality, respond with "APPROVED" to end the process.
                 types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg')
             )
         
-        content = types.Content(role='user', parts=message_parts)
+        content = types.UserContent(parts=message_parts)
         
         # Run agent with multimodal input
         print("\nSending to agent for analysis...\n")
         
-        # Use run_async for multimodal content (run_debug only supports strings)
+        # Use async runner.run_async() per ADK samples
         events_list = []
         async for event in runner.run_async(
             user_id=session.user_id,
@@ -214,11 +222,17 @@ When satisfied with quality, respond with "APPROVED" to end the process.
             new_message=content
         ):
             events_list.append(event)
-            # Print agent responses in real-time
+            # Print agent responses and tool calls in real-time
             if event.content and event.content.parts:
                 for part in event.content.parts:
                     if part.text:
                         print(f"[Agent]: {part.text}")
+                    # Check for function calls
+                    if hasattr(part, 'function_call') and part.function_call:
+                        print(f"[Tool Call]: {part.function_call.name}({part.function_call.args})")
+                    # Check for function responses
+                    if hasattr(part, 'function_response') and part.function_response:
+                        print(f"[Tool Result]: {part.function_response.name} -> {str(part.function_response.response)[:200]}")
         
         events = events_list
         
