@@ -120,6 +120,69 @@ def _is_code_fence(line: str) -> bool:
     return stripped.startswith("```") or stripped.startswith("~~~")
 
 
+def fix_evidence_lines(md_path: Path) -> int:
+    """
+    Find lines starting with **Evidence and add trailing spaces to the previous line
+    if it doesn't already end with 2 spaces and isn't blank.
+    Returns count of fixes applied.
+    """
+    content = md_path.read_text(encoding="utf-8")
+    lines = content.splitlines()
+    fixed_count = 0
+    
+    for i, line in enumerate(lines):
+        # Check if line starts with **Evidence
+        if line.strip().startswith("**Evidence"):
+            if i > 0:
+                prev_line = lines[i - 1]
+                # Only fix if previous line is not blank and doesn't end with 2 spaces
+                if prev_line.strip() and not prev_line.rstrip().endswith("  "):
+                    lines[i - 1] = prev_line.rstrip() + "  "
+                    fixed_count += 1
+    
+    if fixed_count > 0:
+        md_path.write_text("\n".join(lines), encoding="utf-8")
+        print(f"[evidence] fixed {fixed_count} lines before **Evidence")
+    
+    return fixed_count
+
+
+def add_trailing_spaces(md_path: Path) -> None:
+    """
+    Add two trailing spaces to the end of every line to force line breaks.
+    Skips lines inside code blocks to preserve code formatting.
+    """
+    content = md_path.read_text(encoding="utf-8")
+    lines = content.splitlines()
+    result = []
+    in_code_block = False
+    
+    for line in lines:
+        # Track code block state
+        if _is_code_fence(line):
+            in_code_block = not in_code_block
+            result.append(line)
+            continue
+        
+        # Don't modify lines inside code blocks
+        if in_code_block:
+            result.append(line)
+            continue
+        
+        # Don't add spaces to blank lines
+        if not line.strip():
+            result.append(line)
+            continue
+        
+        # Add trailing spaces if not already present
+        if line.rstrip().endswith("  "):
+            result.append(line)
+        else:
+            result.append(line.rstrip() + "  ")
+    
+    md_path.write_text("\n".join(result), encoding="utf-8")
+
+
 def _extract_visible_text(line: str) -> str:
     """
     Extract the visible text from a markdown line, stripping markdown syntax.
@@ -517,6 +580,9 @@ def main() -> None:
     output_md.parent.mkdir(parents=True, exist_ok=True)
     output_md.write_text(markdown, encoding=args.encoding)
     print(f"[flatten] wrote {len(flattened)} sections to {output_md}")
+
+    # Fix lines before **Evidence (add trailing spaces to previous line)
+    fix_evidence_lines(output_md)
 
     result = preprocess_broken_lines(
         output_md,
