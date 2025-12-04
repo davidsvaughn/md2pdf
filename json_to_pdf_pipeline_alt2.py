@@ -17,13 +17,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pdfplumber
-from rapidfuzz import fuzz
 
 from flatten_json_to_md import flatten, to_markdown
-
-
-# Logging control
-DEBUG_STEPPING = True  # Set to True to see sequential stepping debug info
 
 
 def parse_args() -> argparse.Namespace:
@@ -309,7 +304,6 @@ def extract_pdf_lines(pdf_path: Path) -> List[Tuple[str, str]]:
 def find_broken_lines(md_path: Path, pdf_path: Path) -> Dict:
     """
     Check every markdown line to see if it renders on its own line in the PDF.
-    Steps through both files sequentially to match lines in order.
     Returns info about broken lines and their fix types.
     """
     if not md_path.exists():
@@ -330,52 +324,44 @@ def find_broken_lines(md_path: Path, pdf_path: Path) -> Dict:
             "message": "No checkable lines found",
         }
     
+    # Build a set of PDF line signatures for quick lookup
+    pdf_sigs = {sig for _, sig in pdf_lines}
+    
     broken: List[Dict] = []
     correct_count = 0
     skip_until_idx = -1  # For skipping rest of a list after fixing first item
-    pdf_pos = 0  # Current position in PDF lines - we step through sequentially
     
     for i, (line_idx, line, sig) in enumerate(checkable):
         if line_idx <= skip_until_idx:
             continue
         
+        # For short signatures, use full line matching to avoid false positives
+        # (e.g., "Evidence:" appears at end of many lines but we need it on its own line)
         full_sig = _get_full_signature(line)
+        use_exact_match = len(sig) < 15  # Short signatures need exact matching
         
-        # Search for this line in PDF, starting from current position
-        # Look ahead a reasonable window (not the entire rest of the PDF)
+        # Check if this line's signature appears at the start of any PDF line
         line_found = False
-        found_at = -1
-        search_window = min(50, len(pdf_lines) - pdf_pos)  # Look ahead up to 50 lines
-        
-        for j in range(pdf_pos, min(pdf_pos + search_window, len(pdf_lines))):
-            pdf_orig, pdf_sig = pdf_lines[j]
+        for pdf_orig, pdf_sig in pdf_lines:
             if not pdf_sig:
                 continue
-            
-            # Check if this PDF line matches our markdown line
-            # Use full signature for short lines, prefix for longer ones
-            if len(full_sig) < 20:
-                # Short line - need exact or near-exact match
+            if use_exact_match:
+                # For short lines, require the PDF line to match the full signature
+                # (PDF line should start with our content, or be exactly our content)
                 if pdf_sig == full_sig or pdf_sig.startswith(full_sig):
                     line_found = True
-                    found_at = j
                     break
             else:
-                # Longer line - prefix match is fine
-                if pdf_sig.startswith(sig) or (len(pdf_sig) >= len(sig) and sig.startswith(pdf_sig[:len(sig)])):
+                # For longer lines, prefix matching is fine
+                if pdf_sig.startswith(sig) or sig.startswith(pdf_sig[:len(sig)]):
                     line_found = True
-                    found_at = j
                     break
         
         if line_found:
             correct_count += 1
-            pdf_pos = found_at + 1  # Move PDF position past this match
             continue
         
-        # Line not found in expected position - it's broken
-        # Don't advance pdf_pos since this line didn't render on its own line
-        
-        # Determine fix type
+        # Line not found - determine fix type
         is_list = _is_list_line(line)
         list_start_idx = _find_list_start(md_lines, line_idx) if is_list else -1
         is_first_of_list = is_list and (list_start_idx == line_idx)
